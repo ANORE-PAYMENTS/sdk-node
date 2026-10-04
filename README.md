@@ -9,10 +9,10 @@ nodejs/
 ├── index.js          точка входа (экспорт)
 ├── index.d.ts        TypeScript-типы
 └── src/
-    ├── client.js     AnoreClient — создание платежа, статус
+    ├── client.js     AnoreClient — платежи, баланс и выплаты
     ├── transport.js  HTTP с ретраями/бэкоффом
     ├── webhooks.js   verifyWebhook / parseWebhook
-    ├── models.js     Payment, WebhookEvent
+    ├── models.js     модели ответов API и вебхуков
     └── errors.js     иерархия ошибок
 ```
 
@@ -41,12 +41,28 @@ console.log(payment.paymentUrl) // отправьте клиента сюда
 // 2. проверить статус
 const status = await anore.getPayment(payment.id)
 console.log(status.status, status.paid) // 'paid', true
+
+// 3. список платежей и баланс
+const page = await anore.listPayments({ shopId: 1, status: 'paid', limit: 20 })
+const balance = await anore.getBalance({ shopId: 1 })
+
+// 4. выплата
+const payout = await anore.createPayout({
+  amount: 5000,
+  method: 'usdt_ton',
+  address: 'UQ...',
+  shopId: 1,
+  externalId: 'payout_42',
+})
+console.log(payout.id, payout.status)
 ```
 
 ## Проверка вебхука
 
 При оплате anore шлёт `POST` на ваш URL с заголовком `Anore-Signature`.
 Проверяйте подпись по **сырому** телу запроса (не распарсенному JSON):
+
+Тот же обработчик принимает `payout.created`, `payout.processing`, `payout.succeeded`, `payout.failed` и `payout.updated` (ручная корректировка статуса, см. `statusRevision`); у события выплаты `event.isPayout === true`.
 
 ```js
 const express = require('express')
@@ -85,8 +101,14 @@ try {
 | API | Описание |
 |-----|----------|
 | `new AnoreClient({ apiKey, secret?, baseUrl?, timeout?, maxRetries? })` | клиент; `secret` подписывает исходящие запросы |
-| `createPayment({ amount, description, orderId?, shopId? })` | создать счёт → `Payment` |
+| `createPayment({ amount, description, orderId?, shopId?, currency?, methods?, getbackUrl?, successUrl?, failUrl? })` | создать счёт → `Payment` |
 | `getPayment(id)` | статус → `Payment` (`.status`, `.paid`) |
+| `listPayments({ shopId?, status?, from?, to?, limit?, offset? })` | страница платежей → `PaymentList` |
+| `getBalance({ shopId? })` | баланс → `Balance` |
+| `getPayoutFees({ shopId? })` | комиссии → `PayoutFees` |
+| `getPayoutRates({ shopId? })` | курсы → `PayoutRates` |
+| `createPayout({ amount, method, address, shopId?, bank?, externalId? })` | заявка → `Payout` |
+| `getPayout(id)` | статус выплаты → `Payout` |
 | `verifyWebhook(rawBody, signature, secret)` | проверка подписи → `boolean` |
 | `parseWebhook(rawBody, signature, secret)` | проверка + разбор → `WebhookEvent` (бросает `SignatureError`) |
 
