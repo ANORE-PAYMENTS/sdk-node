@@ -1,12 +1,9 @@
 'use strict'
 
-// Internal HTTP transport — global fetch (Node 18+) with retry/backoff on network
-// errors and 5xx. Not part of the public API; use AnoreClient instead.
-
 const crypto = require('node:crypto')
-const { errorForStatus, APIConnectionError } = require('./errors')
+const { errorForStatus, APIError, APIConnectionError } = require('./errors')
 
-const USER_AGENT = 'anore-node/1.0.0'
+const USER_AGENT = 'anore-node/1.2.0'
 
 function backoff(attempt) {
   return Math.min(500 * 2 ** attempt, 4000)
@@ -17,9 +14,18 @@ function sleep(ms) {
 
 class Transport {
   constructor({ baseUrl, apiKey, secret = null, timeout = 30000, maxRetries = 2 }) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '')
+    const base = new URL(baseUrl)
+    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+      throw new Error('AnoreClient: baseUrl must be an HTTP(S) API URL without credentials, query or fragment')
+    }
+    let path = base.pathname.replace(/\/+$/, '')
+    if (!path) path = '/api/v1'
+    else if (path === '/api') path += '/v1'
+    this.baseUrl = base.origin + path
     this.apiKey = apiKey
     this.secret = secret
+    if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('AnoreClient: timeout must be > 0')
+    if (!Number.isInteger(maxRetries) || maxRetries < 0) throw new Error('AnoreClient: maxRetries must be a nonnegative integer')
     this.timeout = timeout
     this.maxRetries = maxRetries
   }
@@ -36,52 +42,53 @@ class Transport {
       payload = JSON.stringify(body)
       headers['Content-Type'] = 'application/json'
       if (this.secret) {
-        headers['Anore-Signature'] = crypto
+        const signature = crypto
           .createHmac('sha256', this.secret)
           .update(payload)
           .digest('hex')
+        headers['X-ZPay-Signature'] = signature
       }
     }
 
-    let lastErr = null
-    // retry only transient failures: network/timeout + 5xx. A received 4xx is
-    // returned immediately (no retry).
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    const retries = method === 'GET' ? this.maxRetries : 0
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), this.timeout)
       try {
-        const res = await fetch(url, { method, headers, body: payload, signal: ctrl.signal })
-        clearTimeout(t)
+        const res = await fetch(url, { method, headers, body: payload, signal: ctrl.signal, redirect: 'manual' })
         const text = await res.text()
-        const data = parseJson(text)
+        clearTimeout(t)
+        const data = parseJson(text, res.status, res.ok)
         if (res.ok) return data
-        if (res.status >= 500 && attempt < this.maxRetries) {
-          lastErr = res.status
+        if (res.status >= 500 && attempt < retries) {
           await sleep(backoff(attempt))
           continue
         }
         const requestId = res.headers.get('x-request-id')
-        const message = data.message || data.error || 'request failed'
+        const message = typeof data.message === 'string' ? data.message : typeof data.error === 'string' ? data.error : 'request failed'
         throw errorForStatus(res.status, message, { data, requestId })
       } catch (e) {
         clearTimeout(t)
-        // our own APIError -> bubble up; only network/abort errors are retryable
-        if (e && e.name && e.name.endsWith('Error') && typeof e.status === 'number') throw e
-        lastErr = e
-        if (attempt < this.maxRetries) {
+
+        if (e instanceof APIError) throw e
+        if (attempt < retries) {
           await sleep(backoff(attempt))
           continue
         }
         throw new APIConnectionError(`could not reach anore API: ${e && e.message ? e.message : e}`)
       }
     }
-    throw new APIConnectionError(`could not reach anore API: ${lastErr}`)
   }
 }
 
-function parseJson(text) {
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return { raw: text } }
+function parseJson(text, status, success) {
+  try {
+    const data = JSON.parse(text)
+    if (data && typeof data === 'object' && !Array.isArray(data)) return data
+  } catch {}
+  if (success) throw new APIError('API returned an invalid JSON object', { status })
+  return {}
 }
 
 module.exports = { Transport }
