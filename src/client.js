@@ -142,7 +142,7 @@ class AnoreClient {
 }
 
 function validateIdempotencyKey(value, operation) {
-  if (typeof value !== 'string' || value.length < 1 || value.length > 128) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 128) {
     throw new Error(`${operation}: idempotencyKey must be a string of 1 to 128 characters`)
   }
 }

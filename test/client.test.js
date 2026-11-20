@@ -86,6 +86,15 @@ test('payment context validation fails before networking', async () => {
   for (const franchise of invalidFranchises) await assert.rejects(client.createPayment({ amount: 10, description: 'test', franchise }))
 })
 
+test('subscription idempotency keys are validated before networking', async () => {
+  const client = new AnoreClient({ apiKey: 'key', baseUrl: 'http://127.0.0.1:9' })
+  for (const idempotencyKey of ['', '   ', 'x'.repeat(129)]) {
+    await assert.rejects(client.createSubscription({
+      planId: 'plan', customerId: 'customer', customerEmail: 'buyer@example.com', idempotencyKey,
+    }))
+  }
+})
+
 test('subscription methods preserve caller-owned idempotency keys without POST retries', async t => {
   const { client, calls } = await fixture(t, (call, res) => {
     if (call.path === '/api/v1/subscriptions/catalog') return json(res, 200, { success: true, shopIdRequired: true, environment: 'live', shops: [] })
