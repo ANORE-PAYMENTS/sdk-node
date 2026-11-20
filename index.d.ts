@@ -11,6 +11,19 @@ export interface AnoreClientOptions {
   maxRetries?: number
 }
 
+export interface UserIdentity {
+  type: 'telegram_id' | 'email' | 'username' | 'external_id'
+  value: string | number
+  telegramUsername?: string
+}
+
+export interface Franchise {
+  type: 'telegram_bot' | 'website'
+  address: string
+  ownerTelegramId: string | number
+  ownerTelegramUsername?: string
+}
+
 export interface CreatePaymentParams {
 
   amount: number
@@ -34,6 +47,10 @@ export interface CreatePaymentParams {
   callbackUrl?: string
 
   email?: string
+
+  userIdentity?: UserIdentity
+
+  franchise?: Franchise
 }
 
 export interface ListPaymentsParams {
@@ -46,6 +63,21 @@ export interface ListPaymentsParams {
 }
 
 export interface ShopParams { shopId?: number }
+
+export interface ListPayoutsParams extends ShopParams {
+  limit?: number
+  cursor?: string
+}
+
+export interface CreateSubscriptionParams {
+  planId: string
+  customerId: string
+  customerEmail: string
+  idempotencyKey: string
+  shopId?: number
+}
+
+export interface IdempotencyParams { idempotencyKey: string }
 
 export interface CreatePayoutParams {
   amount: number
@@ -185,6 +217,55 @@ export class Payout {
   readonly txHash?: string
 }
 
+export class PayoutList implements Iterable<Payout> {
+  raw: Record<string, unknown>
+  readonly shopId: number
+  readonly limit: number
+  readonly payouts: Payout[]
+  readonly hasMore: boolean
+  readonly nextCursor: string | null
+  [Symbol.iterator](): Iterator<Payout>
+}
+
+export class SubscriptionCatalog {
+  raw: Record<string, unknown>
+  readonly shopIdRequired: boolean
+  readonly environment: 'live' | 'test'
+  readonly shops: Array<Record<string, unknown>>
+}
+
+export class SubscriptionBinding {
+  raw: Record<string, unknown>
+  readonly subscriptionId: number
+  readonly shopId: number
+  readonly status: 'binding_pending'
+  readonly qrUrl: string
+  readonly environment: 'live' | 'test'
+}
+
+export class SubscriptionCharge {
+  raw: Record<string, unknown>
+  readonly subscriptionId: number
+  readonly chargeId: string
+  readonly paymentId: number | null
+  readonly status: 'creating' | 'pending' | 'reconciling' | 'succeeded' | 'failed' | 'cancelled'
+}
+
+export class SubscriptionStatus {
+  raw: Record<string, unknown>
+  readonly subscriptionId: number
+  readonly shopId: number
+  readonly planId: string
+  readonly planTitle: string
+  readonly status: 'binding_pending' | 'reconciling' | 'active' | 'paused' | 'past_due' | 'cancelled' | 'revoked' | 'failed'
+  readonly customerId: string
+  readonly customerEmail: string
+  readonly amount: number
+  readonly paymentMethod: 'card' | 'sbp' | null
+  readonly environment: 'live' | 'test'
+  readonly nextChargeAt: string | null
+}
+
 export class WebhookEvent {
   raw: Record<string, unknown>
   readonly event: string
@@ -218,9 +299,14 @@ export class AnoreClient {
   createPayment(params: CreatePaymentParams): Promise<Payment>
   getPayment(id: string): Promise<Payment>
   listPayments(params?: ListPaymentsParams): Promise<PaymentList>
+  getSubscriptionCatalog(): Promise<SubscriptionCatalog>
+  createSubscription(params: CreateSubscriptionParams): Promise<SubscriptionBinding>
+  chargeSubscription(id: number, params: IdempotencyParams): Promise<SubscriptionCharge>
+  getSubscription(id: number): Promise<SubscriptionStatus>
   getBalance(params?: ShopParams): Promise<Balance>
   getPayoutFees(params?: ShopParams): Promise<PayoutFees>
   getPayoutRates(params?: ShopParams): Promise<PayoutRates>
+  listPayouts(params?: ListPayoutsParams): Promise<PayoutList>
   createPayout(params: CreatePayoutParams): Promise<Payout>
   getPayout(id: string): Promise<Payout>
 }

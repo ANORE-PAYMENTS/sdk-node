@@ -35,6 +35,11 @@ const payment = await anore.createPayment({
   description: 'Подписка Pro',
   orderId: 'order_42',
   shopId: 1, // обязателен для аккаунтовых ключей (an_live_ / an_test_)
+  userIdentity: {
+    type: 'telegram_id',
+    value: '123456789',
+    telegramUsername: '@customer_name',
+  },
 })
 console.log(payment.paymentUrl) // отправьте клиента сюда
 
@@ -56,6 +61,41 @@ const payout = await anore.createPayout({
 })
 console.log(payout.id, payout.status)
 ```
+
+## Identity и франшиза
+
+`userIdentity` сейчас может быть необязательным для конкретной кассы, но скоро станет обязательным. Передавайте его уже сейчас. Поддерживаются `telegram_id`, `email`, `username`, `external_id`; `telegramUsername` разрешён только с `telegram_id` и не участвует в matching. Telegram ID сопоставляется глобально, остальные типы — только внутри исходной кассы.
+
+```js
+await anore.createPayment({
+  amount: 1500,
+  description: 'Заказ филиала',
+  userIdentity: { type: 'email', value: 'buyer@example.com' },
+  franchise: {
+    type: 'website',
+    address: 'https://branch.example.com',
+    ownerTelegramId: '987654321',
+    ownerTelegramUsername: 'branch_owner',
+  },
+})
+```
+
+`franchise` обязателен при включённом franchise mode и запрещён при выключенном. Оба объекта принадлежат только ANORE, не пересылаются Payso и не возвращаются в публичных responses/webhooks/logs/exports.
+
+## Рекуррентные платежи
+
+```js
+const catalog = await anore.getSubscriptionCatalog()
+const binding = await anore.createSubscription({
+  planId: catalog.shops[0].plans[0].planId,
+  customerId: 'customer-42',
+  customerEmail: 'buyer@example.com',
+  idempotencyKey: 'binding-customer-42',
+  shopId: 1,
+})
+```
+
+Subscription POST никогда не повторяется SDK автоматически. При `503 binding_reconciling` используйте `error.data.subscriptionId` для безопасного `getSubscription(id)` polling; сохраните тот же ключ и body, не отправляйте новый POST и не создавайте новый ключ.
 
 ## Проверка вебхука
 
@@ -101,12 +141,17 @@ try {
 | API | Описание |
 |-----|----------|
 | `new AnoreClient({ apiKey, secret?, baseUrl?, timeout?, maxRetries? })` | клиент; `secret` подписывает исходящие запросы |
-| `createPayment({ amount, description, orderId?, shopId?, currency?, methods?, getbackUrl?, successUrl?, failUrl? })` | создать счёт → `Payment` |
+| `createPayment({ amount, description, ..., userIdentity?, franchise? })` | создать счёт → `Payment`; identity скоро станет обязательным, franchise зависит от режима кассы |
 | `getPayment(id)` | статус → `Payment` (`.status`, `.paid`) |
 | `listPayments({ shopId?, status?, from?, to?, limit?, offset? })` | страница платежей → `PaymentList` |
+| `getSubscriptionCatalog()` | доступные кассы и планы → `SubscriptionCatalog` |
+| `createSubscription({ planId, customerId, customerEmail, idempotencyKey, shopId? })` | QR привязки → `SubscriptionBinding` |
+| `chargeSubscription(id, { idempotencyKey })` | начать списание → `SubscriptionCharge` |
+| `getSubscription(id)` | безопасный статус → `SubscriptionStatus` |
 | `getBalance({ shopId? })` | баланс → `Balance` |
 | `getPayoutFees({ shopId? })` | комиссии → `PayoutFees` |
 | `getPayoutRates({ shopId? })` | курсы → `PayoutRates` |
+| `listPayouts({ shopId?, limit?, cursor? })` | история выплат → `PayoutList` |
 | `createPayout({ amount, method, address, shopId?, bank?, externalId? })` | заявка → `Payout` |
 | `getPayout(id)` | статус выплаты → `Payout` |
 | `verifyWebhook(rawBody, signature, secret)` | проверка подписи → `boolean` |
