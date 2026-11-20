@@ -3,7 +3,7 @@
 const crypto = require('node:crypto')
 const { errorForStatus, APIError, APIConnectionError } = require('./errors')
 
-const USER_AGENT = 'anore-node/1.2.0'
+const USER_AGENT = 'anore-node/1.3.0'
 
 function backoff(attempt) {
   return Math.min(500 * 2 ** attempt, 4000)
@@ -30,12 +30,13 @@ class Transport {
     this.maxRetries = maxRetries
   }
 
-  async request(method, path, body) {
+  async request(method, path, body, extraHeaders = {}) {
     const url = this.baseUrl + path
     const headers = {
       Authorization: `Bearer ${this.apiKey}`,
       'User-Agent': USER_AGENT,
       Accept: 'application/json',
+      ...extraHeaders,
     }
     let payload
     if (body !== undefined) {

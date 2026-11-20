@@ -120,6 +120,55 @@ class Payout {
   get txHash() { return this.raw.txHash }
 }
 
+class PayoutList {
+  constructor(raw) { this.raw = raw || {} }
+  get shopId() { return this.raw.shopId }
+  get limit() { return this.raw.limit }
+  get payouts() { return (this.raw.items || []).map((item) => new Payout(item)) }
+  get hasMore() { return Boolean(this.raw.hasMore) }
+  get nextCursor() { return this.raw.nextCursor ?? null }
+  [Symbol.iterator]() { return this.payouts[Symbol.iterator]() }
+}
+
+class SubscriptionCatalog {
+  constructor(raw) { this.raw = raw || {} }
+  get shopIdRequired() { return Boolean(this.raw.shopIdRequired) }
+  get environment() { return this.raw.environment }
+  get shops() { return this.raw.shops || [] }
+}
+
+class SubscriptionBinding {
+  constructor(raw) { this.raw = raw || {} }
+  get subscriptionId() { return this.raw.subscriptionId }
+  get shopId() { return this.raw.shopId }
+  get status() { return this.raw.status }
+  get qrUrl() { return this.raw.qrUrl }
+  get environment() { return this.raw.environment }
+}
+
+class SubscriptionCharge {
+  constructor(raw) { this.raw = raw || {} }
+  get subscriptionId() { return this.raw.subscriptionId }
+  get chargeId() { return this.raw.chargeId }
+  get paymentId() { return this.raw.paymentId ?? null }
+  get status() { return this.raw.status }
+}
+
+class SubscriptionStatus {
+  constructor(raw) { this.raw = raw || {} }
+  get subscriptionId() { return this.raw.subscriptionId }
+  get shopId() { return this.raw.shopId }
+  get planId() { return this.raw.planId }
+  get planTitle() { return this.raw.planTitle }
+  get status() { return this.raw.status }
+  get customerId() { return this.raw.customerId }
+  get customerEmail() { return this.raw.customerEmail }
+  get amount() { return this.raw.amount }
+  get paymentMethod() { return this.raw.paymentMethod ?? null }
+  get environment() { return this.raw.environment }
+  get nextChargeAt() { return this.raw.nextChargeAt ?? null }
+}
+
 class WebhookEvent {
   constructor(raw) {
     this.raw = raw || {}
@@ -151,4 +200,17 @@ class WebhookEvent {
   get statusRevision() { return this.raw.statusRevision }
 }
 
-module.exports = { Balance, Payment, PaymentList, Payout, PayoutFees, PayoutRates, WebhookEvent }
+module.exports = {
+  Balance,
+  Payment,
+  PaymentList,
+  Payout,
+  PayoutFees,
+  PayoutList,
+  PayoutRates,
+  SubscriptionBinding,
+  SubscriptionCatalog,
+  SubscriptionCharge,
+  SubscriptionStatus,
+  WebhookEvent,
+}

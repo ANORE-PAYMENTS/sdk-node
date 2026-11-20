@@ -1,6 +1,6 @@
 {
   "name": "anore-pay",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Official anore payments SDK for Node.js — accept SBP, cards and crypto payments",
   "main": "index.js",
   "types": "index.d.ts",
@@ -9,6 +9,6 @@
   "scripts": { "test": "node --test" },
   "license": "MIT",
   "homepage": "https://anore.cc/docs",
-  "repository": { "type": "git", "url": "https://github.com/anore-payments/sdk-node.git" },
+  "repository": { "type": "git", "url": "git+https://github.com/ANORE-PAYMENTS/sdk-node.git" },
   "keywords": ["anore", "payments", "sbp", "crypto", "yoomoney", "payment-gateway"]
 }

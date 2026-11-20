@@ -7,7 +7,8 @@ const crypto = require('node:crypto')
 const {
   AnoreClient, DEFAULT_BASE_URL, APIError, APIConnectionError, ValidationError,
   ServerError, SignatureError, verifyWebhook, parseWebhook, Balance, PayoutFees,
-  PayoutRates, Payout,
+  PayoutRates, Payout, PayoutList, SubscriptionBinding, SubscriptionCatalog,
+  SubscriptionCharge, SubscriptionStatus,
 } = require('..')
 
 async function fixture(t, handler) {
@@ -41,6 +42,73 @@ test('current API creation sends email, callback URL, currency and method aliase
   assert.equal(calls[0].headers.authorization, 'Bearer fixture-key')
   assert.deepEqual(JSON.parse(calls[0].raw), { amount: 12.34, description: 'Оплата заказа', orderId: '42', shopId: 7, currency: 'usd', methods: ['card', 'crypto-old'], getbackurl: 'https://merchant.example/back', successurl: 'https://merchant.example/ok', failurl: 'https://merchant.example/fail', callbackUrl: 'https://merchant.example/hook', email: 'customer@example.test' })
   assert.equal(calls[0].headers['x-zpay-signature'], crypto.createHmac('sha256', 'fixture-secret').update(calls[0].raw).digest('hex'))
+})
+
+test('payment context is whitelisted, mapped to snake case and signed over exact bytes', async t => {
+  const { client, calls } = await fixture(t, (call, res) => json(res, 200, { success: true, id: 'invoice', paymentUrl: 'https://pay.anore.cc/invoice' }))
+  await client.createPayment({
+    amount: 10,
+    description: 'branch order',
+    userIdentity: { type: 'telegram_id', value: '123456789', telegramUsername: '@customer_name' },
+    franchise: { type: 'telegram_bot', address: '@branch_bot', ownerTelegramId: '987654321', ownerTelegramUsername: 'branch_owner' },
+  })
+  const body = JSON.parse(calls[0].raw)
+  assert.deepEqual(body.user_identity, { type: 'telegram_id', value: '123456789', telegram_username: '@customer_name' })
+  assert.deepEqual(body.franchise, { type: 'telegram_bot', address: '@branch_bot', owner_telegram_id: '987654321', owner_telegram_username: 'branch_owner' })
+  assert.equal(calls[0].headers['x-zpay-signature'], crypto.createHmac('sha256', 'fixture-secret').update(calls[0].raw).digest('hex'))
+})
+
+test('legacy payment payload omits new context', async t => {
+  const { client, calls } = await fixture(t, (call, res) => json(res, 200, { success: true, id: 'invoice' }))
+  await client.createPayment({ amount: 10, description: 'legacy' })
+  assert.deepEqual(JSON.parse(calls[0].raw), { amount: 10, description: 'legacy', currency: 'rub' })
+})
+
+test('payment context validation fails before networking', async () => {
+  const client = new AnoreClient({ apiKey: 'key', baseUrl: 'http://127.0.0.1:9' })
+  const invalidIdentities = [
+    [],
+    { type: 'phone', value: '1' },
+    { type: 'telegram_id', value: Number.MAX_SAFE_INTEGER + 1 },
+    { type: 'telegram_id', value: '01' },
+    { type: 'email', value: 'buyer@example.com', telegramUsername: 'buyer_name' },
+    { type: 'email', value: 'buyer@example.com', extra: 'no' },
+  ]
+  for (const userIdentity of invalidIdentities) await assert.rejects(client.createPayment({ amount: 10, description: 'test', userIdentity }))
+  const invalidFranchises = [
+    [],
+    { type: 'store', address: 'branch', ownerTelegramId: '1' },
+    { type: 'website', address: 'http://branch.example', ownerTelegramId: '1' },
+    { type: 'telegram_bot', address: 'bot', ownerTelegramId: '1' },
+    { type: 'website', address: 'https://branch.example/path', ownerTelegramId: '1' },
+    { type: 'website', address: 'https://branch.example', ownerTelegramId: 0 },
+  ]
+  for (const franchise of invalidFranchises) await assert.rejects(client.createPayment({ amount: 10, description: 'test', franchise }))
+})
+
+test('subscription methods preserve caller-owned idempotency keys without POST retries', async t => {
+  const { client, calls } = await fixture(t, (call, res) => {
+    if (call.path === '/api/v1/subscriptions/catalog') return json(res, 200, { success: true, shopIdRequired: true, environment: 'live', shops: [] })
+    if (call.path === '/api/v1/subscriptions') return json(res, 200, { success: true, subscriptionId: 42, shopId: 7, status: 'binding_pending', qrUrl: 'https://qr.nspk.ru/x', environment: 'live' })
+    if (call.path === '/api/v1/subscriptions/42/charges') return json(res, 200, { success: true, subscriptionId: 42, chargeId: '00000000-0000-0000-0000-000000000001', status: 'creating' })
+    return json(res, 200, { success: true, subscriptionId: 42, shopId: 7, planId: 'plan', planTitle: 'Plan', status: 'active', customerId: 'customer', customerEmail: 'buyer@example.com', amount: 10, environment: 'live' })
+  })
+  assert.ok(await client.getSubscriptionCatalog() instanceof SubscriptionCatalog)
+  assert.ok(await client.createSubscription({ planId: 'plan', customerId: 'customer', customerEmail: 'buyer@example.com', idempotencyKey: 'binding-key', shopId: 7 }) instanceof SubscriptionBinding)
+  assert.ok(await client.chargeSubscription(42, { idempotencyKey: 'charge-key' }) instanceof SubscriptionCharge)
+  assert.ok(await client.getSubscription(42) instanceof SubscriptionStatus)
+  assert.equal(calls[1].headers['idempotency-key'], 'binding-key')
+  assert.equal(calls[2].headers['idempotency-key'], 'charge-key')
+  assert.equal(calls[2].raw.length, 0)
+})
+
+test('payout history uses cursor pagination', async t => {
+  const { client, calls } = await fixture(t, (call, res) => json(res, 200, { shopId: 7, limit: 25, items: [{ id: 'WD-1' }], hasMore: true, nextCursor: 'next' }))
+  const page = await client.listPayouts({ shopId: 7, limit: 25, cursor: 'opaque' })
+  assert.ok(page instanceof PayoutList)
+  assert.equal(page.nextCursor, 'next')
+  assert.equal([...page][0].id, 'WD-1')
+  assert.equal(calls[0].path, '/api/v1/payouts?limit=25&shopId=7&cursor=opaque')
 })
 
 test('default, legacy, canonical, origin and proxy API bases do not duplicate paths', async t => {
